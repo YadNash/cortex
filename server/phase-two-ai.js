@@ -36,7 +36,7 @@ export const reviewers = {
     demo: "Write acceptance criteria for the happy path, unauthorized access, empty input, retries, and partial failure. Pick one small vertical slice to build first.",
   },
 };
-async function structured(system, input, schema) {
+export async function structured(system, input, schema) {
   const data = await openai("chat/completions", {
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
     response_format: { type: "json_object" },

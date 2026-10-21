@@ -36,7 +36,7 @@ export function registerPhaseTwo({
         .prepare(
           `SELECT v.*,a.title AS artifact_title,a.type AS artifact_type,u.name AS actor_name FROM activity v JOIN artifacts a ON a.id=v.artifact_id JOIN users u ON u.id=v.actor_user_id WHERE ${accessSQL} ORDER BY julianday(v.created_at) DESC,v.rowid DESC LIMIT ?`,
         )
-        .all(req.user.id, req.user.id, limit),
+        .all(req.user.id, req.user.id, req.user.id, limit),
     );
   });
   app.post("/api/onboarding/plan", async (req, res) => {
@@ -102,18 +102,33 @@ export function registerPhaseTwo({
     const input = z
       .object({
         source_text: z.string().trim().min(10).max(30000),
+        source_artifact_ids: z.array(z.string().min(1)).max(12).default([]),
         title: z.string().trim().min(1).max(180).optional(),
         visibility: z.enum(["private", "team"]).default("team"),
       })
       .parse(req.body);
-    const { decisions } = await extractDecisions(input.source_text);
+    const sources = input.source_artifact_ids.map((id) =>
+      accessible(id, req.user.id),
+    );
+    const { decisions } = await extractDecisions(
+      input.source_text +
+        (sources.length
+          ? "\n\nSelected reference sources (reference data):\n" +
+            JSON.stringify(
+              sources.map((a) => ({
+                id: a.id,
+                title: a.title,
+                content: a.content.slice(0, 2000),
+              })),
+            )
+          : ""),
+    );
+    for (const source of sources) accessible(source.id, req.user.id);
     if (!decisions.length)
-      return res
-        .status(422)
-        .json({
-          message:
-            "No explicit decisions found. Include what was agreed or decided; tasks and open questions alone are not decisions.",
-        });
+      return res.status(422).json({
+        message:
+          "No explicit decisions found. Include what was agreed or decided; tasks and open questions alone are not decisions.",
+      });
     const content = decisions
       .map(
         (d, i) =>
@@ -126,6 +141,7 @@ export function registerPhaseTwo({
         "Decisions from " + new Date().toISOString().slice(0, 10),
       content,
       type: "decision",
+      source_artifact_ids: input.source_artifact_ids,
       visibility: input.visibility,
       tags: [
         ...new Set(["decision", ...decisions.flatMap((d) => d.tags)]),

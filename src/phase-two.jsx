@@ -565,7 +565,8 @@ export function ActivityView({ api, openArtifact }) {
     </section>
   );
 }
-export function DecisionCapture({ api, onCreated }) {
+export function DecisionCapture({ api, onCreated, artifacts = [] }) {
+  const [sources, setSources] = useState([]);
   const [notes, setNotes] = useState(""),
     [title, setTitle] = useState(""),
     [visibility, setVisibility] = useState("team"),
@@ -581,6 +582,7 @@ export function DecisionCapture({ api, onCreated }) {
           method: "POST",
           body: {
             source_text: notes,
+            source_artifact_ids: sources,
             ...(title.trim() ? { title: title.trim() } : {}),
             visibility,
           },
@@ -624,6 +626,34 @@ export function DecisionCapture({ api, onCreated }) {
           }
         />
       </label>
+      {artifacts.length > 0 && (
+        <details className="concept-extractor">
+          <summary>Link reference artifacts</summary>
+          <p className="field-help">
+            Selected sources inform extraction and become versioned provenance
+            links. Extracted text uses the sharing scope below.
+          </p>
+          <div className="concept-source-picker">
+            {artifacts.map((a) => (
+              <label key={a.id}>
+                <input
+                  type="checkbox"
+                  checked={sources.includes(a.id)}
+                  disabled={!sources.includes(a.id) && sources.length >= 12}
+                  onChange={(e) =>
+                    setSources((v) =>
+                      e.target.checked
+                        ? [...v, a.id]
+                        : v.filter((id) => id !== a.id),
+                    )
+                  }
+                />
+                {a.title}
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
       <label className="field">
         Where should the decisions live?
         <select

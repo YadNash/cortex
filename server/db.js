@@ -1,3 +1,4 @@
+import { migrateMemory, defaultIntent } from "./memory-db.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -42,6 +43,7 @@ export function openDb(path) {
     id TEXT PRIMARY KEY, type TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
     actor_user_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS activity_recent ON activity(created_at DESC);`);
+  migrateMemory(db);
   backfillActivity(db);
   return db;
 }
@@ -179,6 +181,9 @@ export function seedDemo(db, vector) {
       date,
       date,
     );
+    db.prepare(
+      "UPDATE artifacts SET intent=?,steward_user_id=? WHERE id=?",
+    ).run(defaultIntent(type), owner, id);
     db.prepare("INSERT INTO embeddings VALUES (?,?,?,?,?)").run(
       id,
       owner,

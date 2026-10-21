@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Network,
   BookOpen,
   Activity,
   NotebookPen,
@@ -38,6 +39,13 @@ import {
   CircleHelp,
 } from "lucide-react";
 import "./styles.css";
+import {
+  KnowledgeView,
+  MemoryPanel,
+  ImpactPanel,
+  AnswerFeedback,
+  intentOptions,
+} from "./knowledge.jsx";
 import {
   useTheme,
   ThemeToggle,
@@ -152,6 +160,8 @@ function App() {
     [users, setUsers] = useState([]),
     [health, setHealth] = useState(null),
     [boot, setBoot] = useState(true);
+  const [chatIntent, setChatIntent] = useState("brainstorm");
+  const [libraryIntent, setLibraryIntent] = useState("all");
   const [page, setPage] = useState("chat"),
     [scope, setScope] = useState("all"),
     [artifacts, setArtifacts] = useState([]),
@@ -259,9 +269,21 @@ function App() {
     const task = search.trim()
       ? api("/api/search/artifacts", {
           method: "POST",
-          body: { query: search, scope: page === "chat" ? "all" : scope },
+          body: {
+            query: search,
+            scope: page === "chat" ? "all" : scope,
+            ...(page === "artifacts" && libraryIntent !== "all"
+              ? { intent: libraryIntent }
+              : {}),
+          },
         })
-      : api("/api/artifacts?scope=" + (page === "chat" ? "all" : scope));
+      : api(
+          "/api/artifacts?scope=" +
+            (page === "chat" ? "all" : scope) +
+            (page === "artifacts" && libraryIntent !== "all"
+              ? "&intent=" + libraryIntent
+              : ""),
+        );
     task
       .then((a) => {
         if (active) setArtifacts(a);
@@ -275,7 +297,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [user, page, scope, search, refresh]);
+  }, [user, page, scope, search, refresh, libraryIntent]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, chatBusy]);
@@ -320,13 +342,20 @@ function App() {
         method: "POST",
         body: {
           message,
+          intent: chatIntent,
           history,
           ...(artifactId ? { artifact_id: artifactId } : {}),
         },
       });
       setMessages((v) => [
         ...v,
-        { role: "assistant", content: r.answer, sources: r.used_artifacts },
+        {
+          role: "assistant",
+          content: r.answer,
+          sources: r.used_artifacts,
+          answerId: r.answer_id,
+          intent: r.intent,
+        },
       ]);
     } catch (e) {
       setMessages((v) => [...v, { role: "error", content: e.message }]);
@@ -433,6 +462,14 @@ function App() {
           >
             <Activity size={18} />
             <span>Activity</span>
+          </button>
+          <button
+            className={`nav-item ${page === "knowledge" ? "active" : ""}`}
+            onClick={() => navigate("knowledge")}
+          >
+            <Network size={18} />
+            <span>Knowledge</span>
+            <span className="new-nav-label">NEW</span>
           </button>
         </nav>
         <div className="sidebar-rule" />
@@ -550,6 +587,7 @@ function App() {
                   artifacts: "Artifacts",
                   onboarding: "Onboarding",
                   activity: "Activity",
+                  knowledge: "Knowledge",
                 }[page]
               }
             </strong>
@@ -580,7 +618,14 @@ function App() {
             </IconButton>
           </div>
         )}
-        {page === "onboarding" ? (
+        {page === "knowledge" ? (
+          <KnowledgeView
+            key={user.id}
+            api={api}
+            artifacts={workspaceArtifacts}
+            openArtifact={openArtifact}
+          />
+        ) : page === "onboarding" ? (
           <OnboardingView
             key={user.id + user.role}
             api={api}
@@ -751,6 +796,10 @@ function App() {
                                     kind: "create",
                                     initial: {
                                       content: m.content,
+                                      intent: m.intent || "brainstorm",
+                                      source_artifact_ids: (
+                                        m.sources || []
+                                      ).map((a) => a.id),
                                       title: "",
                                       type: "note",
                                       visibility: "private",
@@ -779,6 +828,9 @@ function App() {
                                 <Copy size={14} />
                               </IconButton>
                             </div>
+                          )}
+                          {m.role === "assistant" && m.answerId && (
+                            <AnswerFeedback api={api} answerId={m.answerId} />
                           )}
                           {m.role === "error" && (
                             <button
@@ -867,6 +919,18 @@ function App() {
                       <span>Add context</span>
                     </button>
                     <div>
+                      <select
+                        className="chat-intent-select"
+                        aria-label="Agent intent"
+                        value={chatIntent}
+                        onChange={(e) => setChatIntent(e.target.value)}
+                      >
+                        {intentOptions.map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
                       <span className="model-label">
                         <span className="model-dot" />
                         {health?.mode === "openai"
@@ -1064,6 +1128,21 @@ function App() {
                 )}
               </label>
             </div>
+            <label className="library-intent-filter">
+              Workflow intent
+              <select
+                aria-label="Filter artifacts by intent"
+                value={libraryIntent}
+                onChange={(e) => setLibraryIntent(e.target.value)}
+              >
+                <option value="all">All intents</option>
+                {intentOptions.map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="library-results-heading">
               <span>
                 {artifacts.length}{" "}
@@ -1135,6 +1214,10 @@ function App() {
           artifact={detail}
           user={user}
           api={api}
+          users={users}
+          available={workspaceArtifacts}
+          onOpen={openArtifact}
+          onUpdated={saved}
           onClose={() => setDetail(null)}
           onEdit={() => setModal({ kind: "edit", initial: detail })}
           onShare={() => setModal({ kind: "share", initial: detail })}
@@ -1203,6 +1286,7 @@ function App() {
             />
           ) : modal.kind === "decisions" ? (
             <DecisionCapture
+              artifacts={workspaceArtifacts}
               api={api}
               onCreated={(a) => {
                 setModal(null);
@@ -1355,9 +1439,9 @@ function Modal({ children, onClose, wide = false }) {
       if (e.key === "Tab") {
         const items = [
           ...ref.current.querySelectorAll(
-            'button,input,textarea,select,[tabindex="0"]',
+            'button,input,textarea,select,summary,[tabindex="0"]',
           ),
-        ].filter((el) => !el.disabled);
+        ].filter((el) => !el.disabled && el.getClientRects().length);
         const first = items[0],
           last = items.at(-1);
         if (e.shiftKey && document.activeElement === first) {
@@ -1417,6 +1501,15 @@ function ArtifactForm({
     type: "note",
     visibility: "private",
     tags: [],
+    intent:
+      initial.intent ||
+      {
+        spec: "specify",
+        decision: "decide",
+        handoff: "handoff",
+        code_snippet: "specify",
+      }[initial.type] ||
+      "brainstorm",
     shared_with_user_ids: initial.shared_with?.map((u) => u.user_id) || [],
     assigned_to_user_id: null,
     ...initial,
@@ -1445,6 +1538,7 @@ function ArtifactForm({
               title: form.title,
               content: form.content,
               type: form.type,
+              intent: form.intent,
               tags: tags
                 .split(",")
                 .map((t) => t.trim())
@@ -1457,6 +1551,8 @@ function ArtifactForm({
               content: form.content,
               type: form.type,
               visibility: form.visibility,
+              intent: form.intent,
+              source_artifact_ids: form.source_artifact_ids || [],
               tags: tags
                 .split(",")
                 .map((t) => t.trim())
@@ -1553,6 +1649,22 @@ function ArtifactForm({
             </label>
           </div>
         </>
+      )}
+      {!sharing && (
+        <label className="field">
+          Workflow intent
+          <select
+            aria-label="Artifact workflow intent"
+            value={form.intent}
+            onChange={(e) => set("intent", e.target.value)}
+          >
+            {intentOptions.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
       {!editing && (
         <>
@@ -1663,7 +1775,19 @@ function ArtifactForm({
     </form>
   );
 }
-function Detail({ artifact: a, user, api, onClose, onEdit, onShare, onChat }) {
+function Detail({
+  artifact: a,
+  user,
+  users,
+  available,
+  onOpen,
+  onUpdated,
+  api,
+  onClose,
+  onEdit,
+  onShare,
+  onChat,
+}) {
   const [comments, setComments] = useState([]),
     [comment, setComment] = useState(""),
     [error, setError] = useState(""),
@@ -1760,6 +1884,16 @@ function Detail({ artifact: a, user, api, onClose, onEdit, onShare, onChat }) {
           </button>
         )}
       </div>
+      <MemoryPanel
+        key={a.id}
+        api={api}
+        artifact={a}
+        users={users}
+        available={available}
+        open={onOpen}
+        onUpdated={onUpdated}
+      />
+      <ImpactPanel key={a.id + "impact"} api={api} artifact={a} open={onOpen} />
       <ReviewPanel
         api={api}
         artifactId={a.id}

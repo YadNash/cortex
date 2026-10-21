@@ -184,3 +184,20 @@ npm run test:browser
 API tests use isolated in-memory databases and cover role updates, permission-filtered plans, decision extraction/no-write cases, reviews, event actors and revocation, explicit chat references, and a migration from an old database. AI contract tests stub provider responses to verify JSON validation, role prompts, independent reviewers, and provider-error handling. These mocks do not validate real model quality or credentials.
 
 `npm run test:browser` builds production assets and starts a separate in-memory demo server on port 4174. It checks the Phase 2 journey, appearance persistence/system changes, and mobile navigation. It never changes your development database. Playwright uses `/usr/bin/chromium` if present; otherwise install its browser with `npx playwright install chromium`, or set `CHROMIUM_PATH` to a compatible executable. Browser screenshots and traces are generated under ignored `test-results/`. Real OpenAI end-to-end validation remains optional and requires a valid server credential.
+
+## Organizational memory release
+
+Open **Knowledge** in the sidebar for six new tools:
+
+- **Decision memory**: filter by a topic tag to follow decisions, their declared owners/dates, and versioned source chains.
+- **Conflicts**: run an on-demand scan of related artifacts, inspect exact evidence, and mark reviewed reports resolved.
+- **Idea map**: choose up to 12 sources and extract source-backed concepts and relationships.
+- **Knowledge health**: inspect possible duplicates, idle artifacts, and scattered/thin topics; request cleanup recommendations without changing records.
+- **Context lab**: see the exact ranking service used by chat, with score breakdowns, omitted-source reasons, and an estimated artifact token budget.
+- **Team profile**: view feedback/preference signals and curate org terminology as the workspace owner.
+
+Artifact details now include **Ownership & source lineage** (or **Who, when, and why** for decisions), a source-link editor, stewardship/decision attribution, and **Explore impact**. Saving a chat answer carries its intent and sources into the new artifact. Chat has an intent selector and Helpful/Not helpful/Too long/Too vague feedback buttons. The artifact library can filter by workflow intent.
+
+Existing data migrates automatically. Organization ownership is enforced; cross-organization shared spaces are **designed but not enabled**. Source snapshots are preserved when source text changes, and derived conflicts/concepts require current access to every input source. Demo mode labels its local heuristics; live AI remains optional. Nothing is auto-merged, archived, or approved.
+
+See [the organizational memory design](docs/organizational-memory.md) for all endpoints, schema, ranking weights, privacy rules, operational limits, and the proposed shared-space API. `npm test` and `npm run test:browser` include the new release's integration and browser workflows.
