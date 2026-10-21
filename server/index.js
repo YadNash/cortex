@@ -5,13 +5,34 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDb, hashPassword, checkPassword, seedDemo } from "./db.js";
+import {
+  openDb,
+  hashPassword,
+  checkPassword,
+  seedDemo,
+  recordActivity,
+  backfillActivity,
+} from "./db.js";
 import { localVector, embed, cosine, answer, isLive } from "./ai.js";
+import { registerPhaseTwo } from "./phase-two.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (existsSync(resolve(root, ".env")))
   process.loadEnvFile(resolve(root, ".env"));
-const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });
-const types = ["note", "idea", "spec", "code_snippet", "handoff", "other"];
+const publicUser = (u) => ({
+  id: u.id,
+  name: u.name,
+  email: u.email,
+  role: u.role || "other",
+});
+const types = [
+  "note",
+  "idea",
+  "spec",
+  "code_snippet",
+  "handoff",
+  "other",
+  "decision",
+];
 const visibility = z.enum(["private", "shared_with", "team"]);
 const fields = {
   title: z.string().trim().min(1).max(180),
@@ -50,6 +71,7 @@ export function createApp({
     }
   }
   if (seed) seedDemo(db, localVector);
+  backfillActivity(db);
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "128kb" }));
@@ -127,7 +149,9 @@ export function createApp({
   app.use("/api", auth);
   app.get("/api/me", (req, res) => res.json(publicUser(req.user)));
   app.get("/api/users", (_, res) =>
-    res.json(db.prepare("SELECT id,name,email FROM users ORDER BY name").all()),
+    res.json(
+      db.prepare("SELECT id,name,email,role FROM users ORDER BY name").all(),
+    ),
   );
   function serialize(a, uid) {
     const permissions = db
@@ -255,9 +279,9 @@ export function createApp({
       throw e;
     }
   }
-  app.post("/api/artifacts", async (req, res) => {
-    const input = createSchema.parse(req.body),
-      a = { id: randomUUID(), owner_user_id: req.user.id, ...input };
+  async function createArtifact(userId, body) {
+    const input = createSchema.parse(body),
+      a = { id: randomUUID(), owner_user_id: userId, ...input };
     ensureUsers([
       ...input.shared_with_user_ids,
       ...(a.assigned_to_user_id ? [a.assigned_to_user_id] : []),
@@ -283,8 +307,12 @@ export function createApp({
             "INSERT INTO artifact_permissions (id,artifact_id,user_id) VALUES (?,?,?)",
           ).run(randomUUID(), a.id, uid);
       storeVector(a, vector);
+      recordActivity(db, "artifact_created", a.id, userId);
     });
-    res.status(201).json(accessible(a.id, req.user.id));
+    return accessible(a.id, userId);
+  }
+  app.post("/api/artifacts", async (req, res) => {
+    res.status(201).json(await createArtifact(req.user.id, req.body));
   });
   app.get("/api/artifacts/:id", (req, res) =>
     res.json(accessible(req.params.id, req.user.id)),
@@ -339,6 +367,7 @@ export function createApp({
         a.id,
       );
       storeVector(merged, vector);
+      recordActivity(db, "artifact_updated", a.id, req.user.id);
     });
     res.json(accessible(a.id, req.user.id));
   });
@@ -375,6 +404,7 @@ export function createApp({
         input.visibility,
         a.id,
       );
+      recordActivity(db, "artifact_updated", a.id, req.user.id);
     });
     res.json(accessible(a.id, req.user.id));
   });
@@ -394,9 +424,18 @@ export function createApp({
       .object({ content: z.string().trim().min(1).max(5000) })
       .parse(req.body);
     const id = randomUUID();
-    db.prepare(
-      "INSERT INTO comments (id,artifact_id,author_user_id,content) VALUES (?,?,?,?)",
-    ).run(id, req.params.id, req.user.id, content);
+    transaction(() => {
+      db.prepare(
+        "INSERT INTO comments (id,artifact_id,author_user_id,content) VALUES (?,?,?,?)",
+      ).run(id, req.params.id, req.user.id, content);
+      recordActivity(
+        db,
+        "artifact_commented",
+        req.params.id,
+        req.user.id,
+        "comment:" + id,
+      );
+    });
     res.status(201).json({
       id,
       content,
@@ -461,26 +500,43 @@ export function createApp({
           .default([]),
       })
       .parse(req.body);
-    const primary = q.artifact_id
-      ? accessible(q.artifact_id, req.user.id)
-      : null;
+    const available = list(req.user.id, "all");
+    const idMention = q.message.match(
+      /\bartifact(?:\s+ID)?\s+([a-f0-9]{8}-[a-f0-9-]{27,}|a-[a-z0-9_-]+|\d+)\b/i,
+    )?.[1];
+    const titleMatch = available
+      .filter((a) => q.message.toLowerCase().includes(a.title.toLowerCase()))
+      .sort((a, b) => b.title.length - a.title.length)[0];
+    const primaryId = q.artifact_id || idMention || titleMatch?.id;
+    const primary = primaryId ? accessible(primaryId, req.user.id) : null;
     let owner;
     const users = db.prepare("SELECT id,name FROM users").all();
-    for (const u of users) {
-      const first = u.name.split(" ")[0].toLowerCase();
-      if (
-        q.message.toLowerCase().includes(first + "'s") ||
-        q.message.toLowerCase().includes(first + "’s")
-      ) {
-        owner = u.id;
-        break;
-      }
-    }
+    const lower = q.message.toLowerCase().replace(/’/g, "'");
+    const fullMatches = users.filter((u) =>
+      lower.includes(u.name.toLowerCase() + "'s"),
+    );
+    const firstMatches = users.filter((u) =>
+      new RegExp(
+        "(?:^|[^a-z])" +
+          u.name
+            .split(" ")[0]
+            .toLowerCase()
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          "'s\\b",
+      ).test(lower),
+    );
+    if (fullMatches.length === 1) owner = fullMatches[0].id;
+    else if (firstMatches.length === 1) owner = firstMatches[0].id;
     let artifacts = await search(req.user.id, q.message, "all", owner);
     if (primary)
       artifacts = [primary, ...artifacts.filter((a) => a.id !== primary.id)];
     artifacts = artifacts.slice(0, 5).map((a) => accessible(a.id, req.user.id));
-    const response = await answer(q.message, artifacts, q.history);
+    const response = await answer(
+      q.message,
+      artifacts,
+      q.history,
+      req.user.role,
+    );
     for (const a of artifacts) accessible(a.id, req.user.id);
     res.json({
       answer: response,
@@ -492,6 +548,16 @@ export function createApp({
       })),
       mode: isLive() ? "openai" : "demo",
     });
+  });
+  registerPhaseTwo({
+    app,
+    db,
+    accessible,
+    list,
+    search,
+    createArtifact,
+    publicUser,
+    accessSQL,
   });
   if (process.env.NODE_ENV === "production") {
     app.use(express.static(resolve(root, "dist")));

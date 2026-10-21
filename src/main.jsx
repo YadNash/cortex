@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  BookOpen,
+  Activity,
+  NotebookPen,
+  Scale,
   ArrowUp,
   ArrowUpRight,
   ArrowRight,
@@ -34,6 +38,15 @@ import {
   CircleHelp,
 } from "lucide-react";
 import "./styles.css";
+import {
+  useTheme,
+  ThemeToggle,
+  ProfileSettings,
+  OnboardingView,
+  ActivityView,
+  DecisionCapture,
+  ReviewPanel,
+} from "./phase-two.jsx";
 const icons = {
   note: FileText,
   idea: Lightbulb,
@@ -41,6 +54,7 @@ const icons = {
   code_snippet: Code2,
   handoff: ArrowUpRight,
   other: FileText,
+  decision: Scale,
 };
 const typeName = {
   note: "Note",
@@ -49,6 +63,7 @@ const typeName = {
   code_snippet: "Code snippet",
   handoff: "Handoff",
   other: "Other",
+  decision: "Decision",
 };
 const scopes = [
   ["all", "All artifacts"],
@@ -131,6 +146,7 @@ function Visibility({ value }) {
   );
 }
 function App() {
+  const theme = useTheme();
   const [token, setToken] = useState(localStorage.getItem("cortex.token"));
   const [user, setUser] = useState(null),
     [users, setUsers] = useState([]),
@@ -292,6 +308,7 @@ function App() {
     if (!text.trim() || chatBusy) return;
     const message = text.trim();
     const history = messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
     setMessages((v) => [...v, { role: "user", content: message }]);
@@ -342,7 +359,13 @@ function App() {
         <Spinner />
       </div>
     );
-  if (!user) return <Auth api={api} health={health} onAuth={authenticated} />;
+  if (!user)
+    return (
+      <>
+        <ThemeToggle theme={theme} className="auth-theme-toggle" />
+        <Auth api={api} health={health} onAuth={authenticated} />
+      </>
+    );
   return (
     <div className="app-shell">
       {mobile && (
@@ -395,6 +418,21 @@ function App() {
           >
             <Users size={18} />
             <span>Team</span>
+          </button>
+          <button
+            className={`nav-item ${page === "onboarding" ? "active" : ""}`}
+            onClick={() => navigate("onboarding")}
+          >
+            <BookOpen size={18} />
+            <span>Onboarding</span>
+            <span className="new-nav-label">NEW</span>
+          </button>
+          <button
+            className={`nav-item ${page === "activity" ? "active" : ""}`}
+            onClick={() => navigate("activity")}
+          >
+            <Activity size={18} />
+            <span>Activity</span>
           </button>
         </nav>
         <div className="sidebar-rule" />
@@ -505,9 +543,19 @@ function App() {
             </IconButton>
             <span>Workspace</span>
             <ChevronRight size={13} />
-            <strong>{page === "chat" ? "My Agent" : "Artifacts"}</strong>
+            <strong>
+              {
+                {
+                  chat: "My Agent",
+                  artifacts: "Artifacts",
+                  onboarding: "Onboarding",
+                  activity: "Activity",
+                }[page]
+              }
+            </strong>
           </div>
           <div className="topbar-actions">
+            <ThemeToggle theme={theme} />
             <span className="private-label">
               <LockKeyhole size={12} />
               {page === "chat"
@@ -532,7 +580,16 @@ function App() {
             </IconButton>
           </div>
         )}
-        {page === "chat" ? (
+        {page === "onboarding" ? (
+          <OnboardingView
+            key={user.id + user.role}
+            api={api}
+            user={user}
+            openArtifact={openArtifact}
+          />
+        ) : page === "activity" ? (
+          <ActivityView api={api} openArtifact={openArtifact} />
+        ) : page === "chat" ? (
           <div className={`chat-layout ${context ? "" : "no-context"}`}>
             <section className="chat-main">
               <div className="section-bar">
@@ -541,6 +598,13 @@ function App() {
                   My Agent<span className="subtle">A mind by your side</span>
                 </div>
                 <div className="section-tools">
+                  <button
+                    className="capture-decisions-button"
+                    onClick={() => setModal({ kind: "decisions" })}
+                  >
+                    <NotebookPen size={15} />
+                    <span>Capture decisions</span>
+                  </button>
                   <IconButton
                     label="New conversation"
                     disabled={chatBusy}
@@ -1080,7 +1144,7 @@ function App() {
       {modal && (
         <Modal
           onClose={() => setModal(null)}
-          wide={["create", "edit"].includes(modal.kind)}
+          wide={["create", "edit", "decisions"].includes(modal.kind)}
         >
           {["create", "edit", "share"].includes(modal.kind) ? (
             <ArtifactForm
@@ -1112,7 +1176,14 @@ function App() {
                       </strong>
                       <small>{u.email}</small>
                     </div>
-                    <span className="member-role">Teammate</span>
+                    <span className="member-role">
+                      {{
+                        engineer: "Engineer",
+                        pm: "Product",
+                        designer: "Designer",
+                        other: "Teammate",
+                      }[u.role] || "Teammate"}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1123,36 +1194,23 @@ function App() {
               </div>
             </>
           ) : modal.kind === "settings" ? (
-            <>
-              <div className="eyebrow">MAKE YOURSELF AT HOME</div>
-              <h2>Your little corner.</h2>
-              <div className="settings-profile">
-                <Avatar name={user.name} />
-                <div>
-                  <strong>{user.name}</strong>
-                  <p>{user.email}</p>
-                </div>
-              </div>
-              <div className="settings-status">
-                <span className="status-dot" />
-                <strong>
-                  {health?.mode === "openai"
-                    ? "OpenAI is connected"
-                    : "You’re exploring demo mode"}
-                </strong>
-              </div>
-              <p className="modal-description">
-                {health?.mode === "openai"
-                  ? "Chat uses live AI and semantic embeddings. Cortex only sends artifacts you can access."
-                  : "Demo chat quotes your saved artifacts with a fixed next-step suggestion. Search uses local keyword similarity. Your data, sharing, and handoffs work fully."}
-              </p>
-              <div className="form-note">
-                <Settings2 size={18} />
-                For live AI, set LLM_PROVIDER=openai and CORTEX_AI_API_KEY in
-                the server environment, then restart the API. Keep keys on the
-                server.
-              </div>
-            </>
+            <ProfileSettings
+              user={user}
+              setUser={setUser}
+              api={api}
+              theme={theme}
+              health={health}
+            />
+          ) : modal.kind === "decisions" ? (
+            <DecisionCapture
+              api={api}
+              onCreated={(a) => {
+                setModal(null);
+                setRefresh((v) => v + 1);
+                setDetail(a);
+                notify("Decisions saved. A clearer next chapter.");
+              }}
+            />
           ) : (
             <>
               <div className="about-logo">
@@ -1702,6 +1760,11 @@ function Detail({ artifact: a, user, api, onClose, onEdit, onShare, onChat }) {
           </button>
         )}
       </div>
+      <ReviewPanel
+        api={api}
+        artifactId={a.id}
+        renderText={(text) => <RichText text={text} />}
+      />
       <section className="comments">
         <h3>
           Around this thought <span>{comments.length}</span>

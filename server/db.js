@@ -30,7 +30,36 @@ export function openDb(path) {
     CREATE INDEX IF NOT EXISTS artifact_owner ON artifacts(owner_user_id);
     CREATE INDEX IF NOT EXISTS permission_user ON artifact_permissions(user_id, artifact_id);
   `);
+  if (
+    !db
+      .prepare("PRAGMA table_info(users)")
+      .all()
+      .some((c) => c.name === "role")
+  ) {
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'other'");
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS activity (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+    actor_user_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+  ); CREATE INDEX IF NOT EXISTS activity_recent ON activity(created_at DESC);`);
+  backfillActivity(db);
   return db;
+}
+export function recordActivity(db, type, artifactId, actorId, eventId) {
+  db.prepare(
+    "INSERT INTO activity (id,type,artifact_id,actor_user_id,created_at) VALUES (?,?,?,?,?)",
+  ).run(
+    eventId ||
+      (type === "artifact_created" ? "created:" + artifactId : randomUUID()),
+    type,
+    artifactId,
+    actorId,
+    new Date().toISOString(),
+  );
+}
+export function backfillActivity(db) {
+  db.exec(`INSERT OR IGNORE INTO activity SELECT 'created:' || id, 'artifact_created', id, owner_user_id, created_at FROM artifacts;
+    INSERT OR IGNORE INTO activity SELECT 'comment:' || id, 'artifact_commented', artifact_id, author_user_id, created_at FROM comments;`);
 }
 export function seedDemo(db, vector) {
   if (db.prepare("SELECT count(*) AS n FROM users").get().n) return;
@@ -48,6 +77,14 @@ export function seedDemo(db, vector) {
       )
       .run(...u, password),
   );
+  for (const [id, role] of [
+    ["demo-alex", "pm"],
+    ["demo-jamie", "pm"],
+    ["demo-sarah", "designer"],
+    ["demo-sam", "engineer"],
+  ]) {
+    db.prepare("UPDATE users SET role=? WHERE id=?").run(role, id);
+  }
   const rows = [
     [
       "a-onboarding",
